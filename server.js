@@ -13,6 +13,7 @@ const SUPABASE_KEY     = process.env.SUPABASE_SERVICE_KEY;
 const API_KEY          = process.env.API_KEY;
 const GMAIL_USER       = process.env.GMAIL_USER;
 const RESEND_API_KEY   = process.env.RESEND_API_KEY;
+const RESEND_TO        = process.env.RESEND_TO || GMAIL_USER;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -79,7 +80,7 @@ async function sendBackup() {
       },
       body: JSON.stringify({
         from: 'backup@resend.dev',
-        to: [GMAIL_USER],
+        to: [process.env.RESEND_TO || GMAIL_USER],
         subject: `📊 Backup Portfolio ${date}`,
         text: `Backup automático del ${date}.\nÚltima actualización: ${data.updated_at}`,
         attachments: [{
