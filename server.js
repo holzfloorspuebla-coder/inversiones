@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
-const nodemailer = require('nodemailer');
 const cron = require('node-cron');
 
 const app = express();
@@ -11,9 +10,9 @@ app.use(cors());
 // ── Config ────────────────────────────────────────────────────────────────────
 const SUPABASE_URL     = process.env.SUPABASE_URL;
 const SUPABASE_KEY     = process.env.SUPABASE_SERVICE_KEY;
-const API_KEY          = process.env.API_KEY;           // clave privada para el dashboard
-const GMAIL_USER       = process.env.GMAIL_USER;        // tu@gmail.com
-const GMAIL_APP_PASS   = process.env.GMAIL_APP_PASS;    // app password de Gmail
+const API_KEY          = process.env.API_KEY;
+const GMAIL_USER       = process.env.GMAIL_USER;
+const RESEND_API_KEY   = process.env.RESEND_API_KEY;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -24,7 +23,7 @@ function auth(req, res, next) {
   next();
 }
 
-// ── GET /data — cargar portfolio ──────────────────────────────────────────────
+// ── GET /data ─────────────────────────────────────────────────────────────────
 app.get('/data', auth, async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -40,7 +39,7 @@ app.get('/data', auth, async (req, res) => {
   }
 });
 
-// ── PUT /data — guardar portfolio ─────────────────────────────────────────────
+// ── PUT /data ─────────────────────────────────────────────────────────────────
 app.put('/data', auth, async (req, res) => {
   try {
     const payload = req.body;
@@ -58,7 +57,7 @@ app.put('/data', auth, async (req, res) => {
   }
 });
 
-// ── Backup por email ──────────────────────────────────────────────────────────
+// ── Backup por email vía Resend ───────────────────────────────────────────────
 async function sendBackup() {
   try {
     const { data, error } = await supabase
@@ -68,34 +67,41 @@ async function sendBackup() {
       .single();
     if (error) throw error;
 
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: GMAIL_USER, pass: GMAIL_APP_PASS }
-    });
-
     const date = new Date().toISOString().slice(0, 10);
     const json = JSON.stringify(data.data, null, 2);
+    const base64 = Buffer.from(json).toString('base64');
 
-    await transporter.sendMail({
-      from: GMAIL_USER,
-      to: GMAIL_USER,
-      subject: `📊 Backup Portfolio ${date}`,
-      text: `Backup automático del ${date}. Última actualización: ${data.updated_at}`,
-      attachments: [{
-        filename: `portfolio_${date}.json`,
-        content: json,
-        contentType: 'application/json'
-      }]
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: 'backup@resend.dev',
+        to: [GMAIL_USER],
+        subject: `📊 Backup Portfolio ${date}`,
+        text: `Backup automático del ${date}.\nÚltima actualización: ${data.updated_at}`,
+        attachments: [{
+          filename: `portfolio_${date}.json`,
+          content: base64
+        }]
+      })
     });
 
-    console.log(`✅ Backup enviado: ${date}`);
+    const result = await res.json();
+    if (res.ok) {
+      console.log(`✅ Backup enviado: ${date}`);
+    } else {
+      console.error('❌ Error Resend:', result);
+    }
   } catch (err) {
     console.error('❌ Error en backup:', err);
   }
 }
 
-// Cron: todos los días a las 23:00 hora Ciudad de México (UTC-6 = 05:00 UTC)
-cron.schedule('0 5 * * *', sendBackup, { timezone: 'America/Mexico_City' });
+// Cron: todos los días a las 23:00 hora Ciudad de México
+cron.schedule('0 23 * * *', sendBackup, { timezone: 'America/Mexico_City' });
 
 // ── GET /backup — trigger manual ──────────────────────────────────────────────
 app.get('/backup', auth, async (req, res) => {
